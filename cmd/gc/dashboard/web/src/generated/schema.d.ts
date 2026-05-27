@@ -2168,6 +2168,8 @@ export interface components {
             ref?: string;
             status: string;
             title: string;
+            /** Format: date-time */
+            updated_at?: string;
         };
         BeadAssignInputBody: {
             /** @description Assignee name. */
