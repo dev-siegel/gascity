@@ -2235,6 +2235,12 @@ export interface components {
             /** @description Bead type. */
             type?: string;
         };
+        BeadsDiagnostic: {
+            beads_store: string;
+            native_store_eligible: boolean;
+            preflight_gate?: string;
+            preflight_reason?: string;
+        };
         /**
          * @description Lifecycle state of a session binding.
          * @enum {string}
@@ -4051,6 +4057,8 @@ export interface components {
             agent_details?: components["schemas"]["StatusAgentDetail"][] | null;
             /** @description Agent state counts. */
             agents: components["schemas"]["StatusAgentCounts"];
+            /** @description Bead store selection diagnostic. Omitted when unavailable. */
+            beads?: components["schemas"]["BeadsDiagnostic"];
             /** @description Mail counts. */
             mail: components["schemas"]["StatusMailCounts"];
             /** @description City name. */

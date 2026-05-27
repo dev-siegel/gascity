@@ -604,6 +604,14 @@ type BeadUpdateBody struct {
 	Type *string `json:"type,omitempty"`
 }
 
+// BeadsDiagnostic defines model for BeadsDiagnostic.
+type BeadsDiagnostic struct {
+	BeadsStore          string  `json:"beads_store"`
+	NativeStoreEligible bool    `json:"native_store_eligible"`
+	PreflightGate       *string `json:"preflight_gate,omitempty"`
+	PreflightReason     *string `json:"preflight_reason,omitempty"`
+}
+
 // BindingStatus Lifecycle state of a session binding.
 type BindingStatus string
 
@@ -2714,6 +2722,7 @@ type StatusBody struct {
 	// AgentDetails Per-agent state (for CLI status views). Empty when none.
 	AgentDetails *[]StatusAgentDetail `json:"agent_details,omitempty"`
 	Agents       StatusAgentCounts    `json:"agents"`
+	Beads        *BeadsDiagnostic     `json:"beads,omitempty"`
 	Mail         StatusMailCounts     `json:"mail"`
 
 	// Name City name.
