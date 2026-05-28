@@ -1,55 +1,61 @@
-# Release gate - mouse_mode config field (ga-weme6 / ga-xr5o0)
+# Release gate: PR #2563 agent mouse_mode and bead updated_at
 
-**Verdict:** PASS
+Evaluated: 2026-05-28T15:53:31Z
 
-- Deploy bead: `ga-weme6` (review bead)
-- Source bead: `ga-xr5o0` (closed)
-- Branch: `builder/ga-xr5o0-1`
+## Scope
+
+- Deploy bead: `ga-6cc3qf` - Review: PR #2563 current head
+- Source bead chain: `ga-in5wn7` -> `ga-688pwi` -> `ga-u9qua8`
 - PR: https://github.com/gastownhall/gascity/pull/2563
-- HEAD: `f16074f8d` (`feat(config): add agent mouse mode`)
+- Branch: `builder/ga-xr5o0-1`
+- Evaluated commit: `4d844d073`
+- Current `origin/main`: `3203b502f`
+- Merge base with `origin/main`: `f67cdc3e8`
+
+The `docs/PROJECT_MANIFEST.md` file referenced by the deployer prompt is not
+present in this checkout, so this gate uses the six release criteria from the
+active deployer instructions.
 
 ## Criteria
 
-| # | Criterion | Verdict | Evidence |
-|---|-----------|---------|----------|
-| 1 | Reviewer PASS verdict in bead notes | PASS | `ga-weme6` notes contain `VERDICT: pass` and the reviewer summary reports PASS at `f16074f8d`. |
-| 2 | Acceptance criteria met | PASS | `mouse_mode` is threaded through `config.Agent`, patch/override apply paths, pool deep copy, migration structs, template resolution, runtime config, schemas, and generated clients. Runtime `MouseOn` participates in the v3 fingerprint. Tmux startup disables mouse/activity by default and skips that step when `mouse_mode = "on"`. |
-| 3 | Tests pass on final branch | PASS | `make test-fast-parallel` PASS from detached `/tmp/gascity-release-ga-xr5o0.umExZv` worktree at `f16074f8d`; focused tests, vet, dashboard check, dashboard smoke, and whitespace check also passed. |
-| 4 | No high-severity review findings open | PASS | Reviewer notes list no blocking or HIGH findings; only non-blocking observations were recorded. |
-| 5 | Working tree clean | PASS | `git status --short --branch` clean before gate-file commit; `git diff --check` clean. |
-| 6 | Branch diverges cleanly from main | PASS | `git merge-tree --write-tree HEAD origin/main` returned a tree hash with exit 0; `origin/main...HEAD` is 0 behind / 1 ahead before this gate commit. |
+| # | Criterion | Result | Evidence |
+|---|-----------|--------|----------|
+| 1 | Review PASS present | PASS | `ga-6cc3qf` notes contain `REVIEW VERDICT: PASS` for PR #2563 at `builder/ga-xr5o0-1 @ 4d844d073`. |
+| 2 | Acceptance criteria met | PASS | `mouse_mode` is threaded through config, patch/override paths, pool copy, migration config, schemas, generated clients, template resolution, runtime startup hints, and runtime fingerprinting. The current head also carries bead `UpdatedAt` propagation through bead stores, query, API/genclient schema, and tests. |
+| 3 | Tests pass | PASS | Focused tests, fast baseline, vet, dashboard check, dashboard smoke, schema freshness, and whitespace check all passed on the current head. |
+| 4 | No high-severity review findings open | PASS | `ga-6cc3qf` review notes list no blocking or HIGH findings. Earlier findings on stale heads were non-blocking or addressed by rerouting/retry. |
+| 5 | Final branch is clean | PASS | `git status --short` was empty before updating this gate file; this file is the only deployer change and is committed with the gate update. |
+| 6 | Branch diverges cleanly from main | PASS | `git merge-tree --write-tree HEAD origin/main` exited 0 and produced tree `c35a78862ca7876b16b34353c10edba569ac46b0`; no merge conflict was reported against current `origin/main`. |
 
-## Acceptance evidence
+## Acceptance Evidence
 
-- Default/empty `mouse_mode` preserves headless behavior by mapping to `MouseOn=false`.
-- Explicit `mouse_mode = "off"` is accepted and preserves default mouse-off startup behavior.
-- Explicit `mouse_mode = "on"` maps to runtime `MouseOn=true` and skips tmux mouse/activity disable.
-- `ValidateAgents` rejects invalid `mouse_mode` values outside `""`, `"on"`, and `"off"`.
-- `AgentPatch`, `AgentOverride`, `applyAgentPatch`, `applyAgentOverride`, migration config, schema generation, and `deepCopyAgent` all include the new field.
-- Runtime fingerprint includes `MouseOn`, with `FingerprintVersion` bumped from `v2` to `v3`.
+- Default and empty `mouse_mode` preserve headless behavior by mapping to
+  `MouseOn=false`.
+- Explicit `mouse_mode = "off"` is accepted and preserves the default mouse-off
+  startup behavior.
+- Explicit `mouse_mode = "on"` maps to runtime `MouseOn=true` and skips tmux
+  mouse/activity disable.
+- Invalid `mouse_mode` values fail config validation.
+- `AgentPatch`, `AgentOverride`, apply paths, migration config, schema
+  generation, generated clients, and `deepCopyAgent` include the new field.
+- Runtime fingerprint includes `MouseOn`, with `FingerprintVersion` bumped from
+  `v2` to `v3`.
+- Bead `UpdatedAt` is stamped and propagated through the current branch's bead
+  store, API, genclient, and query surfaces.
 
 ## Validation
 
-- `make test-fast-parallel` from `/tmp/gascity-release-ga-xr5o0.umExZv` - PASS
 - `go test ./internal/config ./internal/runtime ./internal/runtime/tmux ./internal/migrate -count=1` - PASS
 - `go test ./cmd/gc -run 'TestDeepCopyAgentCoversAllFields|Test.*Template|Test.*Pool' -count=1` - PASS
-- `go test ./internal/api ./internal/api/genclient -run 'TestOpenAPISpecInSync|TestGeneratedClientInSync' -count=1` - PASS
+- `go test ./internal/beads ./internal/api ./internal/api/genclient -count=1` - PASS
 - `go test ./test/docsync -run TestSchemaFreshness -count=1` - PASS
+- `make test-fast-parallel` - PASS
 - `go vet ./...` - PASS
 - `make dashboard-check` - PASS
 - `make dashboard-smoke` - PASS
-- `git diff --check` - PASS
+- `git diff --check origin/main...HEAD` - PASS
 
-## Local environment note
+## Push Target
 
-The first `make test-fast-parallel` run from the nested
-`/home/jaword/projects/gc-management/.gc/worktrees/gascity/deployer`
-checkout failed in `cmd/gc` shard 5 because the enclosing management city
-loads `/home/jaword/projects/gc-management/packs/maintainer-pr-review/pack.toml`,
-which still uses deprecated `[formulas].dir`. The same shard passed from the
-detached `/tmp` worktree at identical HEAD, so the failure is not attributed to
-this branch.
-
-## Push target
-
-Dry-run push to `origin` succeeded. Use `origin` for the final branch push.
+Dry-run push to `origin` succeeded earlier in this deployer session. Use
+`origin` for the final branch push.
