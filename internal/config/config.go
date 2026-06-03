@@ -2624,11 +2624,8 @@ func (a *Agent) EffectiveWorkQuery() string {
 			`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
 			`done; ` +
 			// Tier 3: ready unassigned routed to this config (shared routed queue).
-			// Only ephemeral sessions and controller probes consume generic config demand.
-			`case "$GC_SESSION_ORIGIN" in ` +
-			`ephemeral|"") ;; ` +
-			`*) exit 0 ;; ` +
-			`esac; ` +
+			// Persistent crew sessions consume routed demand too; the --unassigned
+			// filter and atomic claim already prevent double-consumption.
 			`r=$(` + bdReadyPoolDemandShell(target) + ` --limit=1 2>/dev/null); ` +
 			`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
 			`printf "[]"'`
@@ -2658,11 +2655,8 @@ func (a *Agent) EffectiveWorkQuery() string {
 		`done; ` +
 		// Tier 3: ready unassigned routed to this config (shared routed queue),
 		// then the legacy workflow-control route for pre-rename graphs.
-		// Only ephemeral sessions and controller probes consume generic config demand.
-		`case "$GC_SESSION_ORIGIN" in ` +
-		`ephemeral|"") ;; ` +
-		`*) exit 0 ;; ` +
-		`esac; ` +
+		// Persistent crew sessions consume routed demand too; the --unassigned
+		// filter and atomic claim already prevent double-consumption.
 		`r=$(` + bdReadyPoolDemandShell(target) + ` --limit=1 2>/dev/null); ` +
 		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
 		bdReadyPoolDemandShell(legacyTarget) + ` --limit=1 2>/dev/null'`
