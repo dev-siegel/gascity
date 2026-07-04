@@ -127,6 +127,15 @@ should treat these strings as the current vocabulary:
 | `post-flatten value hash changed with row-count increase` | The database hash changed after at least one stable-table row-count gain. |
 | `post-flatten value hash changed without row-count increase` | The database hash changed without a row-count gain. |
 
+Same-count table hash drift gets one extra chance before quarantining: when a
+concurrent writer is proven by HEAD movement, the compactor re-hashes every
+pre-flight table AS OF the flatten's own commit (a revision-qualified,
+immutable probe). If every flatten-point hash matches its pre-flight hash, the
+flatten provably preserved the data, the drift is attributed to post-flatten
+writer commits (e.g. session-bead heartbeat UPDATEs), and the run defers with a
+pending-GC retry marker instead of quarantining. Any mismatch or probe failure
+keeps the blocking quarantine above.
+
 ## When to Escalate
 
 If a recovery GC reduces the store by less than ~10% and `gc doctor` still

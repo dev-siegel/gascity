@@ -545,6 +545,53 @@ db_value_hash() {
     "SELECT DOLT_HASHOF_DB()"
 }
 
+# flatten_point_hashes_match_preflight — re-hash every pre-flight table AS OF
+# the flatten's own commit via dolt's revision-qualified database syntax
+# (<db>/<commit>). The flatten commit is immutable, so this probe cannot race a
+# live writer. Returning 0 proves the flatten preserved every pre-flight table
+# exactly, which attributes all post-flatten value drift to writer commits that
+# landed after the flatten. Any invalid name, probe failure, empty value, or
+# hash mismatch returns 1 and the caller keeps the quarantine behavior.
+flatten_point_hashes_match_preflight() {
+  fp_db="$1"
+  fp_commit="$2"
+  fp_preflight="$3"
+  case "$fp_commit" in
+    ''|*[!A-Za-z0-9]*)
+      printf 'compact: db=%s flatten-point attribution skipped: invalid flatten HEAD=%s\n' \
+        "$fp_db" "$fp_commit" >&2
+      return 1
+      ;;
+  esac
+  while IFS= read -r fp_line; do
+    [ -n "$fp_line" ] || continue
+    fp_table=${fp_line%% *}
+    fp_rest=${fp_line#* }
+    fp_expected=${fp_rest#* }
+    if ! valid_table_name "$fp_table"; then
+      printf 'compact: db=%s flatten-point attribution skipped: invalid table name %s\n' \
+        "$fp_db" "$fp_table" >&2
+      return 1
+    fi
+    if ! fp_actual=$(table_value_hash "$fp_db/$fp_commit" "$fp_table"); then
+      printf 'compact: db=%s flatten-point hash probe failed for table=%s commit=%s\n' \
+        "$fp_db" "$fp_table" "$fp_commit" >&2
+      return 1
+    fi
+    if [ -z "$fp_actual" ]; then
+      printf 'compact: db=%s flatten-point hash probe returned empty value for table=%s commit=%s\n' \
+        "$fp_db" "$fp_table" "$fp_commit" >&2
+      return 1
+    fi
+    if [ "$fp_actual" != "$fp_expected" ]; then
+      printf 'compact: db=%s flatten-point hash mismatch for table=%s commit=%s want=%s got=%s — flatten may not have preserved pre-flight data\n' \
+        "$fp_db" "$fp_table" "$fp_commit" "$fp_expected" "$fp_actual" >&2
+      return 1
+    fi
+  done < "$fp_preflight"
+  return 0
+}
+
 remote_count() {
   db="$1"
   query_single_cell "$db" "remote count probe failed" \
@@ -1768,6 +1815,40 @@ flatten_database() {
       fi
       rm -f "$preflight_tmp"
       return 0
+    fi
+    # Same-count drift attribution defer. A concurrent writer that UPDATEs
+    # existing rows (the session-bead heartbeat workload) shifts a table's
+    # value hash without changing its row count — by counts alone that is
+    # indistinguishable from flatten corruption, and quarantining it starved
+    # hq's GC for 21 days (2026-06-13). Attribution closes the gap: re-hash
+    # every pre-flight table AS OF the flatten's own immutable commit. If every
+    # flatten-point hash equals its pre-flight hash, the flatten provably
+    # preserved the snapshot and ALL post-flatten drift (same-count and gain
+    # alike) is concurrent-writer data -> defer exactly like the gain+drift
+    # path. A writer that lands in the pre-reset probe sliver folds INTO the
+    # flatten commit and fails this equality, so the unprovable case still
+    # quarantines, as do probe failures, row-count decreases, and table-list
+    # drift.
+    if [ "$writer_race_detected" = "1" ] && \
+       [ "${verify_counts_saw_same_count_hash_drift:-0}" = "1" ] && \
+       [ "${verify_counts_saw_row_decrease:-0}" != "1" ] && \
+       [ "${verify_counts_saw_table_list_change:-0}" != "1" ] && \
+       [ "${verify_counts_saw_probe_failure:-0}" != "1" ] && \
+       [ -n "$flatten_head" ]; then
+      if flatten_point_hashes_match_preflight "$db" "$flatten_head" "$preflight_tmp"; then
+        printf 'compact: db=%s writer race detected during flatten (snapshot_HEAD=%s pre_reset_HEAD=%s flatten_HEAD=%s post_verify_HEAD=%s) — same-count table value hash drift fully attributed to post-flatten writer commits (flatten-point hashes match pre-flight); deferring, will retry next run\n' \
+          "$db" "$head" "${head_before_reset:-<empty>}" "$flatten_head" "${post_verify_head:-<empty>}" >&2
+        if ! defer_writer_race_after_flatten "$db" "$flatten_head" \
+          "$remote" "$expected_remote_head" "$expected_remote_head_verified" \
+          "$compacted_from_head" "$local_branch" "$remote_branch"; then
+          rm -f "$preflight_tmp"
+          return 1
+        fi
+        rm -f "$preflight_tmp"
+        return 0
+      fi
+      printf 'compact: db=%s writer race detected but same-count value hash drift is NOT attributable to post-flatten writer commits; quarantine unchanged\n' \
+        "$db" >&2
     fi
     if [ "$writer_race_detected" = "1" ] && \
        [ "${verify_counts_saw_gain_hash_drift:-0}" = "1" ]; then

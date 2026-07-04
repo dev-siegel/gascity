@@ -581,7 +581,7 @@ case "$query" in
     # probe, which reports writercommit so HEAD has moved past the flatten's own
     # commit. verify_counts still sees compactcommit (gain+drift) because it does
     # not probe HEAD and the "$(current_head)" gates read the real state.
-    if { [ "$mode" = "writer_race_during_verify" ] || [ "$mode" = "writer_race_db_hash_during_verify" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ]; } && [ "$(current_head)" = "compactcommit" ]; then
+    if { [ "$mode" = "writer_race_during_verify" ] || [ "$mode" = "writer_race_db_hash_during_verify" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ] || [ "$mode" = "same_count_drift_writer_race_attributed" ] || [ "$mode" = "same_count_drift_writer_race_attribution_mismatch" ] || [ "$mode" = "same_count_drift_writer_race_attribution_probe_failure" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ]; } && [ "$(current_head)" = "compactcommit" ]; then
       calls_file="$state_file.postverify-head-calls"
       calls=0
       if [ -f "$calls_file" ]; then
@@ -631,6 +631,22 @@ case "$query" in
     exit 0
     ;;
   *"DOLT_HASHOF_TABLE('beads')"*)
+    case "$db" in
+      */*)
+        # Revision-qualified flatten-point attribution probe. Unscripted modes
+        # fail closed: unproven attribution must fall back to quarantine.
+        case "$mode" in
+          same_count_drift_writer_race_attributed|same_count_drift_writer_race_attribution_mismatch|mixed_gain_and_same_count_drift_writer_race_attributed)
+            print_cell hash-beads-before
+            ;;
+          *)
+            printf 'flatten-point hash probe not scripted for mode %%s\n' "$mode" >&2
+            exit 51
+            ;;
+        esac
+        exit 0
+        ;;
+    esac
     if [ "$mode" = "table_hash_empty" ]; then
       print_cell ""
       exit 0
@@ -639,7 +655,7 @@ case "$query" in
       print_cell ""
       exit 0
     fi
-    if { [ "$mode" = "row_count_and_hash_diverges" ] || [ "$mode" = "same_table_replacement_with_row_gain" ] || [ "$mode" = "mixed_row_count_gain_and_same_count_hash_drift" ] || [ "$mode" = "writer_race_before_flatten" ] || [ "$mode" = "remote_writer_race_before_flatten" ] || [ "$mode" = "writer_race_during_verify" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ]; } && [ "$(current_head)" = "compactcommit" ]; then
+    if { [ "$mode" = "row_count_and_hash_diverges" ] || [ "$mode" = "same_table_replacement_with_row_gain" ] || [ "$mode" = "mixed_row_count_gain_and_same_count_hash_drift" ] || [ "$mode" = "writer_race_before_flatten" ] || [ "$mode" = "remote_writer_race_before_flatten" ] || [ "$mode" = "writer_race_during_verify" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ]; } && [ "$(current_head)" = "compactcommit" ]; then
       print_cell hash-beads-after-writer
       exit 0
     fi
@@ -651,7 +667,24 @@ case "$query" in
     exit 0
     ;;
   *"DOLT_HASHOF_TABLE('notes')"*)
-    if { [ "$mode" = "mixed_row_count_gain_and_same_count_hash_drift" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ] || [ "$mode" = "same_count_hash_drift_then_probe_failure" ] || [ "$mode" = "probe_failure_then_same_count_hash_drift" ]; } && [ "$(current_head)" = "compactcommit" ]; then
+    case "$db" in
+      */*)
+        case "$mode" in
+          same_count_drift_writer_race_attributed|mixed_gain_and_same_count_drift_writer_race_attributed)
+            print_cell hash-notes-before
+            ;;
+          same_count_drift_writer_race_attribution_mismatch)
+            print_cell hash-notes-tampered
+            ;;
+          *)
+            printf 'flatten-point hash probe not scripted for mode %%s\n' "$mode" >&2
+            exit 51
+            ;;
+        esac
+        exit 0
+        ;;
+    esac
+    if { [ "$mode" = "mixed_row_count_gain_and_same_count_hash_drift" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ] || [ "$mode" = "same_count_hash_drift_then_probe_failure" ] || [ "$mode" = "probe_failure_then_same_count_hash_drift" ] || [ "$mode" = "same_count_drift_writer_race_attributed" ] || [ "$mode" = "same_count_drift_writer_race_attribution_mismatch" ] || [ "$mode" = "same_count_drift_writer_race_attribution_probe_failure" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ]; } && [ "$(current_head)" = "compactcommit" ]; then
       print_cell hash-notes-after-writer
       exit 0
     fi
@@ -688,6 +721,10 @@ case "$query" in
       exit 0
     fi
     if [ "$mode" = "mixed_row_count_gain_and_same_count_hash_drift" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ]; then
+      print_cells beads notes
+      exit 0
+    fi
+    if [ "$mode" = "same_count_drift_writer_race_attributed" ] || [ "$mode" = "same_count_drift_writer_race_attribution_mismatch" ] || [ "$mode" = "same_count_drift_writer_race_attribution_probe_failure" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ]; then
       print_cells beads notes
       exit 0
     fi
@@ -731,7 +768,7 @@ case "$query" in
       printf 'row count exploded after flatten\n' >&2
       exit 47
     fi
-    if { [ "$mode" = "row_count_gain_with_stable_hashes" ] || [ "$mode" = "row_count_gain_with_db_hash_drift" ] || [ "$mode" = "row_count_and_hash_diverges" ] || [ "$mode" = "same_table_replacement_with_row_gain" ] || [ "$mode" = "mixed_row_count_gain_and_same_count_hash_drift" ] || [ "$mode" = "writer_race_before_flatten" ] || [ "$mode" = "remote_writer_race_before_flatten" ] || [ "$mode" = "writer_race_during_verify" ] || [ "$mode" = "writer_race_db_hash_during_verify" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ]; } && [ "$calls" -gt 1 ]; then
+    if { [ "$mode" = "row_count_gain_with_stable_hashes" ] || [ "$mode" = "row_count_gain_with_db_hash_drift" ] || [ "$mode" = "row_count_and_hash_diverges" ] || [ "$mode" = "same_table_replacement_with_row_gain" ] || [ "$mode" = "mixed_row_count_gain_and_same_count_hash_drift" ] || [ "$mode" = "writer_race_before_flatten" ] || [ "$mode" = "remote_writer_race_before_flatten" ] || [ "$mode" = "writer_race_during_verify" ] || [ "$mode" = "writer_race_db_hash_during_verify" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ]; } && [ "$calls" -gt 1 ]; then
       print_cell 11
     elif [ "$mode" = "row_count_decreases" ] && [ "$calls" -gt 1 ]; then
       print_cell 9
@@ -1996,6 +2033,105 @@ func TestCompactScriptDefersWhenDatabaseHashPreHeadProbeIsEmptyButPostProbeProve
 		t.Fatalf("defer message should report empty pre-probe HEAD and writer post-probe HEAD:\n%s", out)
 	}
 	assertCompactWriterRaceDeferred(t, fixture, out, err)
+}
+
+// A session-bead heartbeat writer that UPDATEs existing rows inside the
+// post-flatten verify window shifts a table's value hash without changing its
+// row count — the 2026-06-13 hq quarantine that starved GC for 21 days. When
+// HEAD movement proves a concurrent writer AND re-hashing every pre-flight
+// table AS OF the flatten's own commit reproduces the pre-flight hashes
+// exactly, the drift is fully attributed to post-flatten writer data and the
+// run defers instead of writing the blocking quarantine marker.
+func TestCompactScriptDefersSameCountHashDriftWhenFlattenPointHashesMatch(t *testing.T) {
+	fixture := newCompactScriptFixture(t)
+	out, err := fixture.run(t, "same_count_drift_writer_race_attributed", "GC_DOLT_COMPACT_THRESHOLD_COMMITS=500")
+	if !strings.Contains(out, "table=notes value hash changed after flatten without row-count increase") {
+		t.Fatalf("output missing the same-count drift signal the gate downgrades:\n%s", out)
+	}
+	if !strings.Contains(out, "same-count table value hash drift fully attributed to post-flatten writer commits") {
+		t.Fatalf("output missing the attribution defer message:\n%s", out)
+	}
+	assertCompactWriterRaceDeferred(t, fixture, out, err)
+	logData, readErr := os.ReadFile(fixture.doltLog)
+	if readErr != nil {
+		t.Fatalf("read dolt log: %v", readErr)
+	}
+	if !strings.Contains(string(logData), "db=beads/compactcommit") {
+		t.Fatalf("attribution must probe table hashes at the flatten commit revision:\n%s", string(logData))
+	}
+}
+
+// The realistic busy-database shape: one table gains rows (writer INSERT)
+// while another drifts at the same row count (writer UPDATE), with a proven
+// writer race. Neither legacy defer path covers this mix; flatten-point
+// attribution proves the flatten preserved the pre-flight snapshot for BOTH
+// tables, so the run defers.
+func TestCompactScriptDefersMixedGainAndSameCountDriftWhenFlattenPointHashesMatch(t *testing.T) {
+	fixture := newCompactScriptFixture(t)
+	out, err := fixture.run(t, "mixed_gain_and_same_count_drift_writer_race_attributed", "GC_DOLT_COMPACT_THRESHOLD_COMMITS=500")
+	if !strings.Contains(out, "table=beads gained rows during flatten") ||
+		!strings.Contains(out, "table=notes value hash changed after flatten without row-count increase") {
+		t.Fatalf("output missing mixed gain + same-count drift signals:\n%s", out)
+	}
+	if !strings.Contains(out, "same-count table value hash drift fully attributed to post-flatten writer commits") {
+		t.Fatalf("output missing the attribution defer message:\n%s", out)
+	}
+	assertCompactWriterRaceDeferred(t, fixture, out, err)
+}
+
+// Attribution is an equality proof, not a heuristic: when the flatten-point
+// hash of a drifted table does NOT reproduce its pre-flight hash, the flatten
+// itself may have mutated data, so the same-count drift keeps the blocking
+// quarantine even though a writer race was proven.
+func TestCompactScriptQuarantinesSameCountDriftWhenFlattenPointHashMismatches(t *testing.T) {
+	fixture := newCompactScriptFixture(t)
+	out, err := fixture.run(t, "same_count_drift_writer_race_attribution_mismatch", "GC_DOLT_COMPACT_THRESHOLD_COMMITS=500")
+	if err == nil {
+		t.Fatalf("compact succeeded despite unattributable same-count hash drift:\n%s", out)
+	}
+	if !strings.Contains(out, "flatten-point hash mismatch for table=notes") {
+		t.Fatalf("output missing flatten-point mismatch evidence:\n%s", out)
+	}
+	if !strings.Contains(out, "NOT attributable to post-flatten writer commits") {
+		t.Fatalf("output missing attribution-failure explanation:\n%s", out)
+	}
+	marker := filepath.Join(fixture.cityPath, ".gc", "runtime", "packs", "dolt", "compact-quarantine", "beads")
+	if reason := compactMarkerValue(t, marker, "reason"); reason != "post-flatten table value hash changed without row-count increase" {
+		t.Fatalf("quarantine reason should stay the same-count drift reason, got %q", reason)
+	}
+	pendingGC := filepath.Join(fixture.cityPath, ".gc", "runtime", "packs", "dolt", "compact-pending-gc", "beads")
+	if _, statErr := os.Stat(pendingGC); !os.IsNotExist(statErr) {
+		t.Fatalf("failed attribution must not write pending-GC marker; stat=%v", statErr)
+	}
+	logData, readErr := os.ReadFile(fixture.doltLog)
+	if readErr != nil {
+		t.Fatalf("read dolt log: %v", readErr)
+	}
+	if strings.Contains(string(logData), "DOLT_GC") {
+		t.Fatalf("failed attribution must block full GC:\n%s", string(logData))
+	}
+}
+
+// A flatten-point probe that errors leaves attribution unproven; unproven
+// falls back to the blocking quarantine. The fake dolt fails revision-
+// qualified probes for any scenario that does not script them, so this also
+// pins the fail-closed default for every legacy scenario.
+func TestCompactScriptQuarantinesSameCountDriftWhenFlattenPointProbeFails(t *testing.T) {
+	fixture := newCompactScriptFixture(t)
+	out, err := fixture.run(t, "same_count_drift_writer_race_attribution_probe_failure", "GC_DOLT_COMPACT_THRESHOLD_COMMITS=500")
+	if err == nil {
+		t.Fatalf("compact succeeded despite failed attribution probe:\n%s", out)
+	}
+	if !strings.Contains(out, "flatten-point hash probe failed for table=beads") {
+		t.Fatalf("output missing flatten-point probe failure evidence:\n%s", out)
+	}
+	if !strings.Contains(out, "NOT attributable to post-flatten writer commits") {
+		t.Fatalf("output missing attribution-failure explanation:\n%s", out)
+	}
+	marker := filepath.Join(fixture.cityPath, ".gc", "runtime", "packs", "dolt", "compact-quarantine", "beads")
+	if reason := compactMarkerValue(t, marker, "reason"); reason != "post-flatten table value hash changed without row-count increase" {
+		t.Fatalf("quarantine reason should stay the same-count drift reason, got %q", reason)
+	}
 }
 
 func TestCompactScriptRetriesPendingGCAfterWriterRaceDefer(t *testing.T) {
