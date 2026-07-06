@@ -581,7 +581,7 @@ case "$query" in
     # probe, which reports writercommit so HEAD has moved past the flatten's own
     # commit. verify_counts still sees compactcommit (gain+drift) because it does
     # not probe HEAD and the "$(current_head)" gates read the real state.
-    if { [ "$mode" = "writer_race_during_verify" ] || [ "$mode" = "writer_race_db_hash_during_verify" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ] || [ "$mode" = "same_count_drift_writer_race_attributed" ] || [ "$mode" = "same_count_drift_writer_race_attribution_mismatch" ] || [ "$mode" = "same_count_drift_writer_race_attribution_probe_failure" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ]; } && [ "$(current_head)" = "compactcommit" ]; then
+    if { [ "$mode" = "writer_race_during_verify" ] || [ "$mode" = "writer_race_db_hash_during_verify" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ] || [ "$mode" = "same_count_drift_writer_race_attributed" ] || [ "$mode" = "same_count_drift_writer_race_attribution_mismatch" ] || [ "$mode" = "same_count_drift_writer_race_attribution_probe_failure" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ] || [ "$mode" = "attribution_skips_uncommitted_preflight_table" ] || [ "$mode" = "attribution_preflight_table_missing_from_flatten_commit" ] || [ "$mode" = "attribution_table_list_probe_failure" ]; } && [ "$(current_head)" = "compactcommit" ]; then
       calls_file="$state_file.postverify-head-calls"
       calls=0
       if [ -f "$calls_file" ]; then
@@ -636,7 +636,7 @@ case "$query" in
         # Revision-qualified flatten-point attribution probe. Unscripted modes
         # fail closed: unproven attribution must fall back to quarantine.
         case "$mode" in
-          same_count_drift_writer_race_attributed|same_count_drift_writer_race_attribution_mismatch|mixed_gain_and_same_count_drift_writer_race_attributed)
+          same_count_drift_writer_race_attributed|same_count_drift_writer_race_attribution_mismatch|mixed_gain_and_same_count_drift_writer_race_attributed|attribution_skips_uncommitted_preflight_table|attribution_preflight_table_missing_from_flatten_commit)
             print_cell hash-beads-before
             ;;
           *)
@@ -655,7 +655,7 @@ case "$query" in
       print_cell ""
       exit 0
     fi
-    if { [ "$mode" = "row_count_and_hash_diverges" ] || [ "$mode" = "same_table_replacement_with_row_gain" ] || [ "$mode" = "mixed_row_count_gain_and_same_count_hash_drift" ] || [ "$mode" = "writer_race_before_flatten" ] || [ "$mode" = "remote_writer_race_before_flatten" ] || [ "$mode" = "writer_race_during_verify" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ]; } && [ "$(current_head)" = "compactcommit" ]; then
+    if { [ "$mode" = "row_count_and_hash_diverges" ] || [ "$mode" = "same_table_replacement_with_row_gain" ] || [ "$mode" = "mixed_row_count_gain_and_same_count_hash_drift" ] || [ "$mode" = "writer_race_before_flatten" ] || [ "$mode" = "remote_writer_race_before_flatten" ] || [ "$mode" = "writer_race_during_verify" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ] || [ "$mode" = "attribution_skips_uncommitted_preflight_table" ]; } && [ "$(current_head)" = "compactcommit" ]; then
       print_cell hash-beads-after-writer
       exit 0
     fi
@@ -670,7 +670,7 @@ case "$query" in
     case "$db" in
       */*)
         case "$mode" in
-          same_count_drift_writer_race_attributed|mixed_gain_and_same_count_drift_writer_race_attributed)
+          same_count_drift_writer_race_attributed|mixed_gain_and_same_count_drift_writer_race_attributed|attribution_skips_uncommitted_preflight_table)
             print_cell hash-notes-before
             ;;
           same_count_drift_writer_race_attribution_mismatch)
@@ -684,11 +684,24 @@ case "$query" in
         exit 0
         ;;
     esac
-    if { [ "$mode" = "mixed_row_count_gain_and_same_count_hash_drift" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ] || [ "$mode" = "same_count_hash_drift_then_probe_failure" ] || [ "$mode" = "probe_failure_then_same_count_hash_drift" ] || [ "$mode" = "same_count_drift_writer_race_attributed" ] || [ "$mode" = "same_count_drift_writer_race_attribution_mismatch" ] || [ "$mode" = "same_count_drift_writer_race_attribution_probe_failure" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ]; } && [ "$(current_head)" = "compactcommit" ]; then
+    if { [ "$mode" = "mixed_row_count_gain_and_same_count_hash_drift" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ] || [ "$mode" = "same_count_hash_drift_then_probe_failure" ] || [ "$mode" = "probe_failure_then_same_count_hash_drift" ] || [ "$mode" = "same_count_drift_writer_race_attributed" ] || [ "$mode" = "same_count_drift_writer_race_attribution_mismatch" ] || [ "$mode" = "same_count_drift_writer_race_attribution_probe_failure" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ] || [ "$mode" = "attribution_skips_uncommitted_preflight_table" ] || [ "$mode" = "attribution_preflight_table_missing_from_flatten_commit" ] || [ "$mode" = "attribution_table_list_probe_failure" ]; } && [ "$(current_head)" = "compactcommit" ]; then
       print_cell hash-notes-after-writer
       exit 0
     fi
     print_cell hash-notes-before
+    exit 0
+    ;;
+  *"DOLT_HASHOF_TABLE('local_metadata')"*)
+    case "$db" in
+      */*)
+        # local_metadata models a dolt_ignore'd working-set-only table: it
+        # exists in NO commit, so a revision-qualified hash probe must never
+        # happen — attribution excludes the table from the table lists instead.
+        printf 'flatten-point hash probe must not run for uncommitted table local_metadata (mode %%s)\n' "$mode" >&2
+        exit 51
+        ;;
+    esac
+    print_cell hash-local-metadata
     exit 0
     ;;
   *"DOLT_HASHOF_TABLE('blocked_issues')"*)
@@ -696,6 +709,35 @@ case "$query" in
     exit 0
     ;;
   *"information_schema.tables"*)
+    case "$db" in
+      */*)
+        # Revision-qualified table-list probe (flatten-point attribution
+        # discovers which pre-flight tables exist in committed history).
+        # Unscripted modes fail closed: unproven attribution must fall back
+        # to quarantine.
+        case "$mode" in
+          attribution_table_list_probe_failure)
+            printf 'information_schema unavailable at revision\n' >&2
+            exit 43
+            ;;
+          attribution_preflight_table_missing_from_flatten_commit)
+            if [ "${db#*/}" = "compactcommit" ]; then
+              print_cell beads
+            else
+              print_cells beads notes
+            fi
+            ;;
+          attribution_skips_uncommitted_preflight_table|same_count_drift_writer_race_attributed|same_count_drift_writer_race_attribution_mismatch|same_count_drift_writer_race_attribution_probe_failure|mixed_gain_and_same_count_drift_writer_race_attributed)
+            print_cells beads notes
+            ;;
+          *)
+            printf 'revision-qualified table list probe not scripted for mode %%s\n' "$mode" >&2
+            exit 51
+            ;;
+        esac
+        exit 0
+        ;;
+    esac
     if [ "$mode" = "table_discovery_failure" ]; then
       printf 'information_schema unavailable\n' >&2
       exit 43
@@ -724,8 +766,12 @@ case "$query" in
       print_cells beads notes
       exit 0
     fi
-    if [ "$mode" = "same_count_drift_writer_race_attributed" ] || [ "$mode" = "same_count_drift_writer_race_attribution_mismatch" ] || [ "$mode" = "same_count_drift_writer_race_attribution_probe_failure" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ]; then
+    if [ "$mode" = "same_count_drift_writer_race_attributed" ] || [ "$mode" = "same_count_drift_writer_race_attribution_mismatch" ] || [ "$mode" = "same_count_drift_writer_race_attribution_probe_failure" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ] || [ "$mode" = "attribution_preflight_table_missing_from_flatten_commit" ] || [ "$mode" = "attribution_table_list_probe_failure" ]; then
       print_cells beads notes
+      exit 0
+    fi
+    if [ "$mode" = "attribution_skips_uncommitted_preflight_table" ]; then
+      print_cells beads notes local_metadata
       exit 0
     fi
     if [ "$mode" = "same_count_hash_drift_then_probe_failure" ]; then
@@ -745,6 +791,10 @@ case "$query" in
       exit 1049
     fi
     print_cell 10
+    exit 0
+    ;;
+  *"SELECT COUNT(*) FROM"*"local_metadata"*)
+    print_cell 7
     exit 0
     ;;
   *"SELECT COUNT(*) FROM"*"notes"*)
@@ -768,7 +818,7 @@ case "$query" in
       printf 'row count exploded after flatten\n' >&2
       exit 47
     fi
-    if { [ "$mode" = "row_count_gain_with_stable_hashes" ] || [ "$mode" = "row_count_gain_with_db_hash_drift" ] || [ "$mode" = "row_count_and_hash_diverges" ] || [ "$mode" = "same_table_replacement_with_row_gain" ] || [ "$mode" = "mixed_row_count_gain_and_same_count_hash_drift" ] || [ "$mode" = "writer_race_before_flatten" ] || [ "$mode" = "remote_writer_race_before_flatten" ] || [ "$mode" = "writer_race_during_verify" ] || [ "$mode" = "writer_race_db_hash_during_verify" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ]; } && [ "$calls" -gt 1 ]; then
+    if { [ "$mode" = "row_count_gain_with_stable_hashes" ] || [ "$mode" = "row_count_gain_with_db_hash_drift" ] || [ "$mode" = "row_count_and_hash_diverges" ] || [ "$mode" = "same_table_replacement_with_row_gain" ] || [ "$mode" = "mixed_row_count_gain_and_same_count_hash_drift" ] || [ "$mode" = "writer_race_before_flatten" ] || [ "$mode" = "remote_writer_race_before_flatten" ] || [ "$mode" = "writer_race_during_verify" ] || [ "$mode" = "writer_race_db_hash_during_verify" ] || [ "$mode" = "writer_race_with_mixed_same_count_hash_drift" ] || [ "$mode" = "mixed_gain_and_same_count_drift_writer_race_attributed" ] || [ "$mode" = "attribution_skips_uncommitted_preflight_table" ]; } && [ "$calls" -gt 1 ]; then
       print_cell 11
     elif [ "$mode" = "row_count_decreases" ] && [ "$calls" -gt 1 ]; then
       print_cell 9
@@ -2124,6 +2174,91 @@ func TestCompactScriptQuarantinesSameCountDriftWhenFlattenPointProbeFails(t *tes
 	}
 	if !strings.Contains(out, "flatten-point hash probe failed for table=beads") {
 		t.Fatalf("output missing flatten-point probe failure evidence:\n%s", out)
+	}
+	if !strings.Contains(out, "NOT attributable to post-flatten writer commits") {
+		t.Fatalf("output missing attribution-failure explanation:\n%s", out)
+	}
+	marker := filepath.Join(fixture.cityPath, ".gc", "runtime", "packs", "dolt", "compact-quarantine", "beads")
+	if reason := compactMarkerValue(t, marker, "reason"); reason != "post-flatten table value hash changed without row-count increase" {
+		t.Fatalf("quarantine reason should stay the same-count drift reason, got %q", reason)
+	}
+}
+
+// The 2026-07-06 hq quarantine: a dolt_ignore'd table (hq's local_metadata,
+// repo_mtimes, wisps, wisp_%) lives in the working set only — DOLT_COMMIT
+// ('-Am') never stages it, so it exists in NO commit and has no flatten-point
+// hash. Demanding one made attribution permanently unprovable on any database
+// with an ignored table. The flatten transaction never rewrites working-set
+// data, so a pre-flight table absent from BOTH the flatten commit and the
+// stable pre-flight snapshot commit is excluded from attribution and the
+// remaining committed tables decide the defer. The fake fails any
+// revision-qualified hash probe for local_metadata, pinning that exclusion
+// happens via the immutable table lists, not by probing the missing table.
+func TestCompactScriptAttributionSkipsUncommittedPreflightTable(t *testing.T) {
+	fixture := newCompactScriptFixture(t)
+	out, err := fixture.run(t, "attribution_skips_uncommitted_preflight_table", "GC_DOLT_COMPACT_THRESHOLD_COMMITS=500")
+	if !strings.Contains(out, "table=beads gained rows during flatten") ||
+		!strings.Contains(out, "table=notes value hash changed after flatten without row-count increase") {
+		t.Fatalf("output missing mixed gain + same-count drift signals:\n%s", out)
+	}
+	if !strings.Contains(out, "table=local_metadata absent from committed history") ||
+		!strings.Contains(out, "uncommitted working-set-only table excluded from attribution") {
+		t.Fatalf("output missing the uncommitted-table exclusion log line:\n%s", out)
+	}
+	if !strings.Contains(out, "same-count table value hash drift fully attributed to post-flatten writer commits") {
+		t.Fatalf("output missing the attribution defer message:\n%s", out)
+	}
+	assertCompactWriterRaceDeferred(t, fixture, out, err)
+	logData, readErr := os.ReadFile(fixture.doltLog)
+	if readErr != nil {
+		t.Fatalf("read dolt log: %v", readErr)
+	}
+	if !strings.Contains(string(logData), "db=beads/compactcommit") {
+		t.Fatalf("attribution must consult committed tables at the flatten commit revision:\n%s", string(logData))
+	}
+	if !strings.Contains(string(logData), "db=beads/headcommit") {
+		t.Fatalf("attribution must consult committed tables at the pre-flight snapshot revision:\n%s", string(logData))
+	}
+}
+
+// The uncommitted-table exclusion must not weaken the dropped-table guard: a
+// pre-flight table PRESENT at the stable pre-flight snapshot commit but
+// missing from the flatten commit may have been dropped by the flatten
+// itself, so attribution fails and the blocking quarantine stays.
+func TestCompactScriptQuarantinesWhenPreflightTableMissingFromFlattenCommit(t *testing.T) {
+	fixture := newCompactScriptFixture(t)
+	out, err := fixture.run(t, "attribution_preflight_table_missing_from_flatten_commit", "GC_DOLT_COMPACT_THRESHOLD_COMMITS=500")
+	if err == nil {
+		t.Fatalf("compact succeeded despite a committed table missing from the flatten commit:\n%s", out)
+	}
+	if !strings.Contains(out, "table=notes present at snapshot commit=headcommit but missing from flatten commit=compactcommit") ||
+		!strings.Contains(out, "flatten may have dropped a committed table") {
+		t.Fatalf("output missing dropped-table evidence:\n%s", out)
+	}
+	if !strings.Contains(out, "NOT attributable to post-flatten writer commits") {
+		t.Fatalf("output missing attribution-failure explanation:\n%s", out)
+	}
+	marker := filepath.Join(fixture.cityPath, ".gc", "runtime", "packs", "dolt", "compact-quarantine", "beads")
+	if reason := compactMarkerValue(t, marker, "reason"); reason != "post-flatten table value hash changed without row-count increase" {
+		t.Fatalf("quarantine reason should stay the same-count drift reason, got %q", reason)
+	}
+	pendingGC := filepath.Join(fixture.cityPath, ".gc", "runtime", "packs", "dolt", "compact-pending-gc", "beads")
+	if _, statErr := os.Stat(pendingGC); !os.IsNotExist(statErr) {
+		t.Fatalf("failed attribution must not write pending-GC marker; stat=%v", statErr)
+	}
+}
+
+// A table-list probe failure at either immutable commit leaves attribution
+// unproven; unproven falls back to the blocking quarantine, exactly like a
+// failed flatten-point hash probe.
+func TestCompactScriptQuarantinesWhenFlattenPointTableListProbeFails(t *testing.T) {
+	fixture := newCompactScriptFixture(t)
+	out, err := fixture.run(t, "attribution_table_list_probe_failure", "GC_DOLT_COMPACT_THRESHOLD_COMMITS=500")
+	if err == nil {
+		t.Fatalf("compact succeeded despite failed flatten-point table list probe:\n%s", out)
+	}
+	if !strings.Contains(out, "flatten-point table list probe failed commit=compactcommit") {
+		t.Fatalf("output missing table-list probe failure evidence:\n%s", out)
 	}
 	if !strings.Contains(out, "NOT attributable to post-flatten writer commits") {
 		t.Fatalf("output missing attribution-failure explanation:\n%s", out)

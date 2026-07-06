@@ -129,12 +129,19 @@ should treat these strings as the current vocabulary:
 
 Same-count table hash drift gets one extra chance before quarantining: when a
 concurrent writer is proven by HEAD movement, the compactor re-hashes every
-pre-flight table AS OF the flatten's own commit (a revision-qualified,
+COMMITTED pre-flight table AS OF the flatten's own commit (a revision-qualified,
 immutable probe). If every flatten-point hash matches its pre-flight hash, the
 flatten provably preserved the data, the drift is attributed to post-flatten
 writer commits (e.g. session-bead heartbeat UPDATEs), and the run defers with a
-pending-GC retry marker instead of quarantining. Any mismatch or probe failure
-keeps the blocking quarantine above.
+pending-GC retry marker instead of quarantining. A pre-flight table absent from
+BOTH the flatten commit and the stable pre-flight snapshot commit is a
+`dolt_ignore`'d working-set-only table (beads ships `local_metadata`,
+`repo_mtimes`, `wisps`, `wisp_%` that way): it exists in no commit, the flatten
+never touches working-set data, and it is excluded from attribution with an
+explicit log line. A table present at the snapshot commit but missing from the
+flatten commit fails attribution (the flatten may have dropped it), as does any
+mismatch or table-list/hash probe failure — those keep the blocking quarantine
+above.
 
 ## When to Escalate
 
