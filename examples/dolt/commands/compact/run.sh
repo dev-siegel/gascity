@@ -548,14 +548,28 @@ db_value_hash() {
 # flatten_point_hashes_match_preflight — re-hash every pre-flight table AS OF
 # the flatten's own commit via dolt's revision-qualified database syntax
 # (<db>/<commit>). The flatten commit is immutable, so this probe cannot race a
-# live writer. Returning 0 proves the flatten preserved every pre-flight table
-# exactly, which attributes all post-flatten value drift to writer commits that
-# landed after the flatten. Any invalid name, probe failure, empty value, or
-# hash mismatch returns 1 and the caller keeps the quarantine behavior.
+# live writer. Returning 0 proves the flatten preserved every COMMITTED
+# pre-flight table exactly, which attributes all post-flatten value drift to
+# writer commits that landed after the flatten.
+#
+# A pre-flight table can be working-set-only: dolt_ignore'd tables (hq ships
+# local_metadata, repo_mtimes, wisps, wisp_% that way) are never staged by the
+# flatten's DOLT_COMMIT('-Am'), exist in NO commit, and so have no flatten-point
+# hash at all — demanding one made attribution permanently unprovable on any
+# database with an ignored table (2026-07-06 hq quarantine). The flatten
+# transaction (soft reset + commit of tracked tables) never rewrites
+# working-set data, so it cannot corrupt an uncommitted table either: a
+# pre-flight table absent from BOTH the flatten commit and the stable
+# pre-flight snapshot commit is excluded from attribution with an explicit
+# log line. A table absent from the flatten commit but PRESENT at the snapshot
+# commit may have been dropped by the flatten and fails attribution. Any
+# invalid name, table-list or hash probe failure, empty value, or hash
+# mismatch returns 1 and the caller keeps the quarantine behavior.
 flatten_point_hashes_match_preflight() {
   fp_db="$1"
   fp_commit="$2"
   fp_preflight="$3"
+  fp_snapshot="$4"
   case "$fp_commit" in
     ''|*[!A-Za-z0-9]*)
       printf 'compact: db=%s flatten-point attribution skipped: invalid flatten HEAD=%s\n' \
@@ -563,6 +577,27 @@ flatten_point_hashes_match_preflight() {
       return 1
       ;;
   esac
+  case "$fp_snapshot" in
+    ''|*[!A-Za-z0-9]*)
+      printf 'compact: db=%s flatten-point attribution skipped: invalid snapshot HEAD=%s\n' \
+        "$fp_db" "$fp_snapshot" >&2
+      return 1
+      ;;
+  esac
+  # Capture via command substitution: user_tables (like every probe helper)
+  # reassigns the GLOBAL db variable, so it must only ever run in a subshell
+  # here — a redirection-based call would leak db=<db>/<commit> into the
+  # caller and corrupt every later message and marker path.
+  if ! fp_flatten_tables=$(user_tables "$fp_db/$fp_commit"); then
+    printf 'compact: db=%s flatten-point table list probe failed commit=%s\n' \
+      "$fp_db" "$fp_commit" >&2
+    return 1
+  fi
+  if ! fp_snapshot_tables=$(user_tables "$fp_db/$fp_snapshot"); then
+    printf 'compact: db=%s snapshot-point table list probe failed commit=%s\n' \
+      "$fp_db" "$fp_snapshot" >&2
+    return 1
+  fi
   while IFS= read -r fp_line; do
     [ -n "$fp_line" ] || continue
     fp_table=${fp_line%% *}
@@ -572,6 +607,16 @@ flatten_point_hashes_match_preflight() {
       printf 'compact: db=%s flatten-point attribution skipped: invalid table name %s\n' \
         "$fp_db" "$fp_table" >&2
       return 1
+    fi
+    if ! printf '%s\n' "$fp_flatten_tables" | grep -qxF "$fp_table"; then
+      if printf '%s\n' "$fp_snapshot_tables" | grep -qxF "$fp_table"; then
+        printf 'compact: db=%s flatten-point attribution failed: table=%s present at snapshot commit=%s but missing from flatten commit=%s — flatten may have dropped a committed table\n' \
+          "$fp_db" "$fp_table" "$fp_snapshot" "$fp_commit" >&2
+        return 1
+      fi
+      printf 'compact: db=%s flatten-point attribution: table=%s absent from committed history (flatten commit=%s and snapshot commit=%s) — uncommitted working-set-only table excluded from attribution\n' \
+        "$fp_db" "$fp_table" "$fp_commit" "$fp_snapshot"
+      continue
     fi
     if ! fp_actual=$(table_value_hash "$fp_db/$fp_commit" "$fp_table"); then
       printf 'compact: db=%s flatten-point hash probe failed for table=%s commit=%s\n' \
@@ -1821,21 +1866,25 @@ flatten_database() {
     # value hash without changing its row count — by counts alone that is
     # indistinguishable from flatten corruption, and quarantining it starved
     # hq's GC for 21 days (2026-06-13). Attribution closes the gap: re-hash
-    # every pre-flight table AS OF the flatten's own immutable commit. If every
-    # flatten-point hash equals its pre-flight hash, the flatten provably
-    # preserved the snapshot and ALL post-flatten drift (same-count and gain
-    # alike) is concurrent-writer data -> defer exactly like the gain+drift
-    # path. A writer that lands in the pre-reset probe sliver folds INTO the
-    # flatten commit and fails this equality, so the unprovable case still
-    # quarantines, as do probe failures, row-count decreases, and table-list
-    # drift.
+    # every COMMITTED pre-flight table AS OF the flatten's own immutable
+    # commit. If every flatten-point hash equals its pre-flight hash, the
+    # flatten provably preserved the snapshot and ALL post-flatten drift
+    # (same-count and gain alike) is concurrent-writer data -> defer exactly
+    # like the gain+drift path. Pre-flight tables absent from committed
+    # history on both sides of the flatten (dolt_ignore'd working-set-only
+    # tables) are excluded — the flatten cannot alter them, and demanding a
+    # flatten-point hash for them made attribution permanently unprovable
+    # (2026-07-06 hq quarantine). A writer that lands in the pre-reset probe
+    # sliver folds INTO the flatten commit and fails this equality, so the
+    # unprovable case still quarantines, as do probe failures, row-count
+    # decreases, and table-list drift.
     if [ "$writer_race_detected" = "1" ] && \
        [ "${verify_counts_saw_same_count_hash_drift:-0}" = "1" ] && \
        [ "${verify_counts_saw_row_decrease:-0}" != "1" ] && \
        [ "${verify_counts_saw_table_list_change:-0}" != "1" ] && \
        [ "${verify_counts_saw_probe_failure:-0}" != "1" ] && \
        [ -n "$flatten_head" ]; then
-      if flatten_point_hashes_match_preflight "$db" "$flatten_head" "$preflight_tmp"; then
+      if flatten_point_hashes_match_preflight "$db" "$flatten_head" "$preflight_tmp" "$head"; then
         printf 'compact: db=%s writer race detected during flatten (snapshot_HEAD=%s pre_reset_HEAD=%s flatten_HEAD=%s post_verify_HEAD=%s) — same-count table value hash drift fully attributed to post-flatten writer commits (flatten-point hashes match pre-flight); deferring, will retry next run\n' \
           "$db" "$head" "${head_before_reset:-<empty>}" "$flatten_head" "${post_verify_head:-<empty>}" >&2
         if ! defer_writer_race_after_flatten "$db" "$flatten_head" \
