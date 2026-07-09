@@ -3689,10 +3689,12 @@ esac
 exit 0
 `)
 
-	// LATENCY_WARN_S=0 makes the latency check fire on every run because
-	// PROBE_END - PROBE_START >= 0 always. That guarantees the advisory
-	// mail path executes regardless of probe duration.
-	out := runDogScript(t, "mol-dog-doctor.sh", binDir, cityPath, dataDir, "GC_DOCTOR_LATENCY_WARN_S=0")
+	// LATENCY_WARN_S=-1 makes the latency check fire on every run because
+	// PROBE_END - PROBE_START > -1 always. That guarantees the advisory
+	// mail path executes regardless of probe duration. (The comparison is
+	// strictly-greater so a boundary-straddling sub-second probe cannot
+	// false-positive; see TestDoctorScriptLatencyBoundaryStraddleDoesNotWarn.)
+	out := runDogScript(t, "mol-dog-doctor.sh", binDir, cityPath, dataDir, "GC_DOCTOR_LATENCY_WARN_S=-1")
 	if !strings.Contains(out, "server: ok") {
 		t.Fatalf("doctor should report server ok when probe succeeds, output:\n%s", out)
 	}
@@ -3705,6 +3707,125 @@ exit 0
 	}
 	if !strings.Contains(string(gcLog), "--from controller") {
 		t.Fatalf("advisory mail must pass --from controller so it is not attributed to 'human', log:\n%s", gcLog)
+	}
+}
+
+// writeDoctorFakeHealthyDolt installs a fake dolt that answers the doctor's
+// read-only probes instantly: reachable server, one connection, no databases.
+func writeDoctorFakeHealthyDolt(t *testing.T, binDir string) {
+	t.Helper()
+	writeExecutable(t, filepath.Join(binDir, "dolt"), `#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  *"SELECT active_branch()"*)
+    printf 'active_branch()\nmain\n'
+    exit 0
+    ;;
+  *"COUNT(*) FROM information_schema.PROCESSLIST"*)
+    printf 'COUNT(*)\n1\n'
+    exit 0
+    ;;
+  *"SHOW DATABASES"*)
+    printf 'Database\n'
+    exit 0
+    ;;
+esac
+exit 0
+`)
+}
+
+// writeFakeSteppingDate installs a fake date binary that returns the given
+// epoch-second values on successive calls (repeating the last value once the
+// list is exhausted). The doctor script reads the clock exactly twice —
+// around the connectivity probe — so two values pin LATENCY_S deterministically.
+func writeFakeSteppingDate(t *testing.T, binDir string, values ...string) {
+	t.Helper()
+	if len(values) == 0 {
+		t.Fatal("writeFakeSteppingDate needs at least one value")
+	}
+	stateFile := filepath.Join(binDir, ".date-call-count")
+	var cases strings.Builder
+	for i, v := range values {
+		fmt.Fprintf(&cases, "  %d) echo %s ;;\n", i+1, v)
+	}
+	fmt.Fprintf(&cases, "  *) echo %s ;;\n", values[len(values)-1])
+	writeExecutable(t, filepath.Join(binDir, "date"), fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+state=%s
+n=$(cat "$state" 2>/dev/null || echo 0)
+n=$((n+1))
+printf '%%s' "$n" > "$state"
+case "$n" in
+%s
+esac
+`, shellQuote(stateFile), cases.String()))
+}
+
+// TestDoctorScriptLatencyBoundaryStraddleDoesNotWarn pins the regression the
+// strictly-greater comparison exists to prevent: whole-second clocks
+// floor-quantize the probe duration, so a millisecond-scale probe straddling
+// a second boundary measures exactly 1s. With the >= comparison that
+// boundary reading tied the 1s default threshold and mailed a false MEDIUM
+// advisory ~10x/day at the 5m order cadence. A 1s reading must NOT warn.
+func TestDoctorScriptLatencyBoundaryStraddleDoesNotWarn(t *testing.T) {
+	cityPath := t.TempDir()
+	dataDir := filepath.Join(cityPath, "dolt-data")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatalf("mkdir data dir: %v", err)
+	}
+
+	binDir := t.TempDir()
+	gcLogPath := writeDogFakeGC(t, binDir)
+	writeDoctorFakeHealthyDolt(t, binDir)
+	// Probe start lands just before an epoch tick, probe end just after:
+	// the classic straddle that measures a sub-second probe as 1s.
+	writeFakeSteppingDate(t, binDir, "1000", "1001")
+
+	out := runDogScript(t, "mol-dog-doctor.sh", binDir, cityPath, dataDir)
+	// The summary must show the quantized 1s reading — this proves the fake
+	// clock drove the measurement (guarding against a vacuous pass where the
+	// real clock measured 0s and no boundary was exercised at all).
+	if !strings.Contains(out, "latency: 1s") {
+		t.Fatalf("fake stepping clock did not drive the probe measurement, output:\n%s", out)
+	}
+	gcLog, err := os.ReadFile(gcLogPath)
+	if err != nil {
+		t.Fatalf("read gc log: %v", err)
+	}
+	if strings.Contains(string(gcLog), "Dolt health advisory") {
+		t.Fatalf("boundary-straddle 1s reading must not mail an advisory at the 1s default threshold, log:\n%s", gcLog)
+	}
+}
+
+// TestDoctorScriptGenuineLatencyDegradationStillWarns is the companion
+// direction: a probe whose measured duration strictly exceeds the threshold
+// (real degradation — a 3s reading cannot be quantization noise) must still
+// mail the MEDIUM advisory.
+func TestDoctorScriptGenuineLatencyDegradationStillWarns(t *testing.T) {
+	cityPath := t.TempDir()
+	dataDir := filepath.Join(cityPath, "dolt-data")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatalf("mkdir data dir: %v", err)
+	}
+
+	binDir := t.TempDir()
+	gcLogPath := writeDogFakeGC(t, binDir)
+	writeDoctorFakeHealthyDolt(t, binDir)
+	writeFakeSteppingDate(t, binDir, "1000", "1003")
+
+	out := runDogScript(t, "mol-dog-doctor.sh", binDir, cityPath, dataDir)
+	if !strings.Contains(out, "latency: 3s") {
+		t.Fatalf("fake stepping clock did not drive the probe measurement, output:\n%s", out)
+	}
+	gcLog, err := os.ReadFile(gcLogPath)
+	if err != nil {
+		t.Fatalf("read gc log: %v", err)
+	}
+	if !strings.Contains(string(gcLog), "Dolt health advisory") {
+		t.Fatalf("a measured 3s probe must mail the advisory at the 1s default threshold, log:\n%s", gcLog)
+	}
+	if !strings.Contains(string(gcLog), "latency 3s > threshold 1s") {
+		t.Fatalf("advisory must carry the strictly-greater warn text, log:\n%s", gcLog)
 	}
 }
 

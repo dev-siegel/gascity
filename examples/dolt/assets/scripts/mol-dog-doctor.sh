@@ -99,10 +99,16 @@ if ! dolt_sql -q "SELECT active_branch()" >/dev/null 2>&1; then
     exit 0
 fi
 PROBE_END=$(date +%s)
+# Whole-second clocks floor-quantize the probe duration: a millisecond-scale
+# probe that straddles a second boundary measures 1s, so a >= comparison
+# against the 1s default fires a false MEDIUM advisory on a healthy server
+# (~10/day at 5m cadence). Strictly-greater keeps the warning sound under
+# quantization: LATENCY_S > threshold guarantees the real duration exceeded
+# the threshold, while a sub-second probe can never measure above 1s.
 LATENCY_S=$((PROBE_END - PROBE_START))
 LATENCY_WARN=""
-if [ "$LATENCY_S" -ge "$LATENCY_WARN_S" ]; then
-    LATENCY_WARN=" [WARN: latency ${LATENCY_S}s >= threshold ${LATENCY_WARN_S}s]"
+if [ "$LATENCY_S" -gt "$LATENCY_WARN_S" ]; then
+    LATENCY_WARN=" [WARN: latency ${LATENCY_S}s > threshold ${LATENCY_WARN_S}s]"
 fi
 
 # --- Step 2: Check resource conditions ---
